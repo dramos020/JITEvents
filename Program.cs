@@ -8,24 +8,24 @@ using System.Collections;
 using Microsoft.Extensions.Logging;
 
 
-public struct MyEventMonitor : IDisposable 
+public struct JITEventMonitor : IDisposable 
 {
-    public static MyEventMonitor StartNew(JITContext context) 
+    public static JITEventMonitor StartNew(JITContext context) 
     { 
-        MyEventListener.Singleton.t_currentContext.Value = context;
-        return new MyEventMonitor();
+        JITActivityEventListener.Singleton.t_currentContext.Value = context;
+        return new JITEventMonitor();
     }
 
     public void Dispose() 
     {
-        MyEventListener.Singleton.t_currentContext.Value = null;
+        JITActivityEventListener.Singleton.t_currentContext.Value = null;
     }
 }
 
-class MyEventListener : EventListener
+class JITActivityEventListener : EventListener
 {
     private static object s_consoleLock = new object();
-    static internal MyEventListener Singleton = new MyEventListener();
+    static internal JITActivityEventListener Singleton = new JITActivityEventListener();
     internal AsyncLocal<JITContext?> t_currentContext = new AsyncLocal<JITContext?>();
 
     public Dictionary<string, Stack<EventWrittenEventArgs>> eventGroupings = new Dictionary<string, Stack<EventWrittenEventArgs>>();
@@ -73,11 +73,11 @@ class MyEventListener : EventListener
                     object[] arguments = (object[])mappedActivity.Payload[2];
                     string activityID = GetIDFromActivityPayload(arguments);
 
-                    t_currentContext.Value?.AddCheckpoint(eventData.EventName, activityID);
+                    t_currentContext.Value?.LogJITEvent(eventData.EventName, activityID);
                 }
                 else
                 {
-                    t_currentContext.Value?.AddCheckpoint(eventData.EventName, null);
+                    t_currentContext.Value?.LogJITEvent(eventData.EventName, null);
                 }
             }
 
@@ -119,10 +119,10 @@ class Program
 
     static async Task GenerateJITs(JITContext context) 
     {
-        using (var monitor = MyEventMonitor.StartNew(context)) 
+        using (var monitor = JITEventMonitor.StartNew(context)) 
         {
             // Using without parentheses or brackets makes it live for the method body
-            using MyEventListener listener = new MyEventListener();
+            using JITActivityEventListener listener = new JITActivityEventListener();
 
             // This code makes 3 Tasks, and then each task creates an Activity and then
             // causes 5 methods to be jitted.
@@ -216,7 +216,7 @@ public class JITContext
 
     public JITContext(ILogger logger) => _logger = logger;
 
-    public void AddCheckpoint(string jitEvent, string activityID) 
+    public void LogJITEvent(string jitEvent, string activityID) 
     {
         _logger.LogInformation(string.IsNullOrEmpty(activityID) ? $"JIT event {jitEvent} has no associated activity" : $"JIT event {jitEvent} is associated with activity {activityID}" );
     }
