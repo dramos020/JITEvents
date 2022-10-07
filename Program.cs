@@ -8,25 +8,25 @@ using System.Collections;
 using Microsoft.Extensions.Logging;
 
 
-public struct JITEventMonitor : IDisposable 
+public struct RuntimeEventMonitor : IDisposable 
 {
-    public static JITEventMonitor StartNew(JITContext context) 
+    public static RuntimeEventMonitor StartNew(RuntimeContext context) 
     { 
-        JITActivityEventListener.Singleton.t_currentContext.Value = context;
-        return new JITEventMonitor();
+        RuntimeActivityEventListener.Singleton.t_currentContext.Value = context;
+        return new RuntimeEventMonitor();
     }
 
     public void Dispose() 
     {
-        JITActivityEventListener.Singleton.t_currentContext.Value = null;
+        RuntimeActivityEventListener.Singleton.t_currentContext.Value = null;
     }
 }
 
-class JITActivityEventListener : EventListener
+class RuntimeActivityEventListener : EventListener
 {
     private static object s_consoleLock = new object();
-    static internal JITActivityEventListener Singleton = new JITActivityEventListener();
-    internal AsyncLocal<JITContext?> t_currentContext = new AsyncLocal<JITContext?>();
+    static internal RuntimeActivityEventListener Singleton = new RuntimeActivityEventListener();
+    internal AsyncLocal<RuntimeContext?> t_currentContext = new AsyncLocal<RuntimeContext?>();
 
     public Dictionary<string, Stack<EventWrittenEventArgs>> eventGroupings = new Dictionary<string, Stack<EventWrittenEventArgs>>();
 
@@ -36,8 +36,8 @@ class JITActivityEventListener : EventListener
 
         if (eventSource.Name == "Microsoft-Windows-DotNETRuntime")
         {
-            // Keyword 0x10 is JIT events
-            EnableEvents(eventSource, EventLevel.Verbose, (EventKeywords)0x10);
+            // Keyword 0x11 is Runtime events
+            EnableEvents(eventSource, EventLevel.Verbose, (EventKeywords)(0x11));
         }
         else if (eventSource.Name == "Microsoft-Diagnostics-DiagnosticSource")
         {
@@ -56,16 +56,22 @@ class JITActivityEventListener : EventListener
 
         String eventDataActivityID = eventData.ActivityId.ToString();
 
-        if ((eventData.EventName.StartsWith("MethodJittingStarted")
-        || eventData.EventName.StartsWith("Activity")) 
-        && !eventGroupings.ContainsKey(eventDataActivityID))
+        if (!eventGroupings.ContainsKey(eventDataActivityID))
         {
             eventGroupings.Add(eventDataActivityID, new Stack<EventWrittenEventArgs>());
         }
 
         lock (s_consoleLock)
         {
-            if (eventData.EventName.StartsWith("MethodJittingStarted"))
+            if (eventData.EventName == "ActivityStart")
+            {
+                eventGroupings[eventDataActivityID].Push(eventData);
+            }
+            else if (eventData.EventName == "ActivityStop")
+            {
+                eventGroupings[eventDataActivityID].Pop();
+            }
+            else 
             {
                 if (eventGroupings[eventDataActivityID].Count > 0)
                 {
@@ -73,22 +79,12 @@ class JITActivityEventListener : EventListener
                     object[] arguments = (object[])mappedActivity.Payload[2];
                     string activityID = GetIDFromActivityPayload(arguments);
 
-                    t_currentContext.Value?.LogJITEvent(eventData.EventName, activityID);
+                    t_currentContext.Value?.LogRuntimeEvent(eventData.EventName, activityID);
                 }
                 else
                 {
-                    t_currentContext.Value?.LogJITEvent(eventData.EventName, null);
+                    t_currentContext.Value?.LogRuntimeEvent(eventData.EventName, null);
                 }
-            }
-
-            if (eventData.EventName == "ActivityStart")
-            {
-                eventGroupings[eventDataActivityID].Push(eventData);
-            }
-
-            if (eventData.EventName == "ActivityStop")
-            {
-                eventGroupings[eventDataActivityID].Pop();
             }
         }
     }
@@ -117,12 +113,12 @@ class Program
         (TParameter0 p0);
 
 
-    static async Task GenerateJITs(JITContext context) 
+    static async Task GenerateJITs(RuntimeContext context) 
     {
-        using (var monitor = JITEventMonitor.StartNew(context)) 
+        using (var monitor = RuntimeEventMonitor.StartNew(context)) 
         {
             // Using without parentheses or brackets makes it live for the method body
-            using JITActivityEventListener listener = new JITActivityEventListener();
+            using RuntimeActivityEventListener listener = new RuntimeActivityEventListener();
 
             // This code makes 3 Tasks, and then each task creates an Activity and then
             // causes 5 methods to be jitted.
@@ -152,12 +148,12 @@ class Program
         }
     }
 
-    static async Task RunJITing(ILogger logger)
+    static async Task RunRuntime(ILogger logger)
     {
-        JITContext context = new JITContext(logger);
-        logger.LogInformation("Starting JITing");
+        RuntimeContext context = new RuntimeContext(logger);
+        logger.LogInformation("Starting Runtime");
         await GenerateJITs(context);
-        logger.LogInformation("Completed JITing");
+        logger.LogInformation("Completed Runtime");
 
     }
 
@@ -168,7 +164,7 @@ class Program
             options.AddSimpleConsole(options => options.SingleLine = true);
         });
 
-        await RunJITing(factory.CreateLogger("Service"));
+        await RunRuntime(factory.CreateLogger("Service"));
     }
 
     // Don't worry about the specifics of this method too much, it uses a feature called
@@ -210,15 +206,15 @@ class Program
     }
 }
 
-public class JITContext 
+public class RuntimeContext 
 {
     ILogger _logger;
 
-    public JITContext(ILogger logger) => _logger = logger;
+    public RuntimeContext(ILogger logger) => _logger = logger;
 
-    public void LogJITEvent(string jitEvent, string activityID) 
+    public void LogRuntimeEvent(string runtimeEvent, string activityID) 
     {
-        _logger.LogInformation(string.IsNullOrEmpty(activityID) ? $"JIT event {jitEvent} has no associated activity" : $"JIT event {jitEvent} is associated with activity {activityID}" );
+        _logger.LogInformation(string.IsNullOrEmpty(activityID) ? $"Runtime event {runtimeEvent} has no associated activity" : $"Runtime event {runtimeEvent} is associated with activity {activityID}" );
     }
 }
 
