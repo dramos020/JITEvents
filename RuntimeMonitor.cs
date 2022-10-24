@@ -14,6 +14,23 @@ public struct RuntimeEventMonitor : IDisposable
     }
 }
 
+class ActivityGeneratingEventSource : EventSource 
+{
+    [Event(1)]
+    public void UserDefinedStart() 
+    {
+        WriteEvent(1);
+    }
+
+    [Event(2)]
+    public void UserDefinedStop() 
+    {
+        WriteEvent(2);
+    }
+    
+}
+
+
 class RuntimeActivityEventListener : EventListener
 {
     private static object s_consoleLock = new object();
@@ -29,16 +46,24 @@ class RuntimeActivityEventListener : EventListener
         if (eventSource.Name == "Microsoft-Windows-DotNETRuntime")
         {
             // Keyword 0x11 is Runtime events
-            EnableEvents(eventSource, EventLevel.Verbose, (EventKeywords)(0x11));
+            EnableEvents(eventSource, EventLevel.Verbose, (EventKeywords)(0x1 | 0x10));
         }
-        else if (eventSource.Name == "Microsoft-Diagnostics-DiagnosticSource")
+        // else if (eventSource.Name == "Microsoft-Diagnostics-DiagnosticSource")
+        // {
+        //     Dictionary<string, string> args = new Dictionary<string, string>();
+        //     // DiagnosticSourceEventSource has this domain specific language to tell it what
+        //     // you want to get events for. '[AS]*' tells it to give you all System.Diagnostic.Activity
+        //     // events.
+        //     args["FilterAndPayloadSpecs"] = "[AS]*";
+        //     EnableEvents(eventSource, EventLevel.Verbose, (EventKeywords)0x2, args);
+        // }
+        else if (eventSource.Name == "System.Threading.Tasks.TplEventSource") 
         {
-            Dictionary<string, string> args = new Dictionary<string, string>();
-            // DiagnosticSourceEventSource has this domain specific language to tell it what
-            // you want to get events for. '[AS]*' tells it to give you all System.Diagnostic.Activity
-            // events.
-            args["FilterAndPayloadSpecs"] = "[AS]*";
-            EnableEvents(eventSource, EventLevel.Verbose, (EventKeywords)0x2, args);
+            EnableEvents(eventSource, EventLevel.Informational, (EventKeywords)0x80);
+        }
+        else if (eventSource.Name == "ActivityGeneratingEventSource") 
+        {
+            EnableEvents(eventSource, EventLevel.Informational);
         }
     }
 
@@ -47,19 +72,20 @@ class RuntimeActivityEventListener : EventListener
         base.OnEventWritten(eventData);
 
         String eventDataActivityID = eventData.ActivityId.ToString();
-
-        if (!eventGroupings.ContainsKey(eventDataActivityID))
-        {
-            eventGroupings.Add(eventDataActivityID, new Stack<EventWrittenEventArgs>());
-        }
-
         lock (s_consoleLock)
         {
-            if (eventData.EventName == "ActivityStart")
+
+            t_currentContext.Value?.LogRuntimeEvent(eventData.EventName, eventDataActivityID);
+            if (!eventGroupings.ContainsKey(eventDataActivityID))
+            {
+                eventGroupings.Add(eventDataActivityID, new Stack<EventWrittenEventArgs>());
+            }
+
+            if (eventData.EventName == "UserDefinedStart")
             {
                 eventGroupings[eventDataActivityID].Push(eventData);
             }
-            else if (eventData.EventName == "ActivityStop")
+            else if (eventData.EventName == "UserDefinedStop")
             {
                 eventGroupings[eventDataActivityID].Pop();
             }
@@ -71,11 +97,11 @@ class RuntimeActivityEventListener : EventListener
                     object[] arguments = (object[])mappedActivity.Payload[2];
                     string activityID = GetIDFromActivityPayload(arguments);
 
-                    t_currentContext.Value?.LogRuntimeEvent(eventData.EventName, activityID);
+                    //t_currentContext.Value?.LogRuntimeEvent(eventData.EventName, activityID);
                 }
                 else
                 {
-                    t_currentContext.Value?.LogRuntimeEvent(eventData.EventName, null);
+                    //t_currentContext.Value?.LogRuntimeEvent(eventData.EventName, null);
                 }
             }
         }

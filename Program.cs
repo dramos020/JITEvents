@@ -21,13 +21,16 @@ class Program
         {
             // Using without parentheses or brackets makes it live for the method body
             using RuntimeActivityEventListener listener = new RuntimeActivityEventListener();
+            using ActivityGeneratingEventSource eventSource = new ActivityGeneratingEventSource();
 
             // This code makes 3 Tasks, and then each task creates an Activity and then
             // causes 5 methods to be jitted.
             List<Task> tasks = new List<Task>();
+
             for (int i = 0; i < 3; ++i)
             {
-                Task t = Task.Run(() =>
+                eventSource.UserDefinedStart();
+                await Task.Run(() =>
                 {
                     using (Activity activity = new Activity($"Activity {i}"))
                     {
@@ -39,14 +42,25 @@ class Program
                         }
                     }
                 });
-
-                tasks.Add(t);
+                eventSource.UserDefinedStop();
             }
 
-            foreach (Task t in tasks)
-            {
-                await t;
-            }
+
+            // eventSource.UserDefinedStart();
+            // await Task.Run(() =>{
+            //     List<object> objects = new List<object>();
+            //     for (int i = 0; i < 100_000; ++i)
+            //     {
+            //         objects.Add(new object());
+            //     }
+
+            //     for (int i = 0; i < 5; ++i)
+            //     {
+            //         MakeDynamicMethod();
+            //     }
+            //     objects.Clear();
+            // });
+            // eventSource.UserDefinedStop();
         }
     }
 
