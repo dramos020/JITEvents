@@ -9,27 +9,26 @@ using Microsoft.Extensions.Logging;
 
 class Program
 {
-    delegate long SquareItInvoker(int input);
+    //delegate long SquareItInvoker(int input);
 
     delegate TReturn OneParameter<TReturn, TParameter0>
         (TParameter0 p0);
 
 
-    static async Task GenerateJITs(RuntimeContext context) 
+    static async Task GenerateJITs(ILogger logger) 
     {
-        using (var monitor = RuntimeEventMonitor.StartNew(context)) 
+        // Using without parentheses or brackets makes it live for the method body
+        using (RuntimeActivityEventListener listener = new RuntimeActivityEventListener(logger))
         {
-            // Using without parentheses or brackets makes it live for the method body
-            using RuntimeActivityEventListener listener = new RuntimeActivityEventListener();
-            using ActivityGeneratingEventSource eventSource = new ActivityGeneratingEventSource();
+            using (ActivityGeneratingEventSource eventSource = new ActivityGeneratingEventSource()){
 
             // This code makes 3 Tasks, and then each task creates an Activity and then
             // causes 5 methods to be jitted.
             List<Task> tasks = new List<Task>();
+            eventSource.UserDefinedStart();
 
             for (int i = 0; i < 3; ++i)
             {
-                eventSource.UserDefinedStart();
                 await Task.Run(() =>
                 {
                     using (Activity activity = new Activity($"Activity {i}"))
@@ -42,33 +41,16 @@ class Program
                         }
                     }
                 });
-                eventSource.UserDefinedStop();
             }
-
-
-            // eventSource.UserDefinedStart();
-            // await Task.Run(() =>{
-            //     List<object> objects = new List<object>();
-            //     for (int i = 0; i < 100_000; ++i)
-            //     {
-            //         objects.Add(new object());
-            //     }
-
-            //     for (int i = 0; i < 5; ++i)
-            //     {
-            //         MakeDynamicMethod();
-            //     }
-            //     objects.Clear();
-            // });
-            // eventSource.UserDefinedStop();
+            eventSource.UserDefinedStop();
+            }
         }
     }
 
     static async Task RunRuntime(ILogger logger)
     {
-        RuntimeContext context = new RuntimeContext(logger);
         logger.LogInformation("Starting Runtime");
-        await GenerateJITs(context);
+        await GenerateJITs(logger);
         logger.LogInformation("Completed Runtime");
 
     }
@@ -121,16 +103,3 @@ class Program
         return Guid.NewGuid().ToString();
     }
 }
-
-public class RuntimeContext 
-{
-    ILogger _logger;
-
-    public RuntimeContext(ILogger logger) => _logger = logger;
-
-    public void LogRuntimeEvent(string runtimeEvent, string activityID) 
-    {
-        _logger.LogInformation(string.IsNullOrEmpty(activityID) ? $"Runtime event {runtimeEvent} has no associated activity" : $"Runtime event {runtimeEvent} is associated with activity {activityID}" );
-    }
-}
-
