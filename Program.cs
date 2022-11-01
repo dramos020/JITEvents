@@ -9,41 +9,37 @@ using Microsoft.Extensions.Logging;
 
 class Program
 {
-    //delegate long SquareItInvoker(int input);
-
     delegate TReturn OneParameter<TReturn, TParameter0>
         (TParameter0 p0);
 
-
     static async Task GenerateJITs(ILogger logger) 
     {
-        // Using without parentheses or brackets makes it live for the method body
         using (RuntimeActivityEventListener listener = new RuntimeActivityEventListener(logger))
         {
             using (ActivityGeneratingEventSource eventSource = new ActivityGeneratingEventSource()){
 
-            // This code makes 3 Tasks, and then each task creates an Activity and then
-            // causes 5 methods to be jitted.
-            List<Task> tasks = new List<Task>();
-            eventSource.UserDefinedStart();
-
-            for (int i = 0; i < 3; ++i)
-            {
-                await Task.Run(() =>
+                // This code makes 3 Tasks, and then each task creates an Activity and then
+                // causes 5 methods to be jitted.
+                eventSource.UserDefinedStart();
+                for (int i = 0; i < 3; ++i)
                 {
-                    using (Activity activity = new Activity($"Activity {i}"))
+                    await Task.Run(() =>
                     {
-                        activity.Start();
-
-                        for (int i = 0; i < 5; i++)
+                        using (Activity activity = new Activity($"Activity {i}"))
                         {
-                            MakeDynamicMethod();
+                            activity.Start();
+
+                            for (int i = 0; i < 5; i++)
+                            {
+                                MakeDynamicMethod();
+                            }
                         }
-                    }
-                });
+                    });
+                }
+                eventSource.UserDefinedStop();
             }
-            eventSource.UserDefinedStop();
-            }
+            // used so that the process does not end before events are sent
+            Thread.Sleep(1000);
         }
     }
 
@@ -52,7 +48,6 @@ class Program
         logger.LogInformation("Starting Runtime");
         await GenerateJITs(logger);
         logger.LogInformation("Completed Runtime");
-
     }
 
     static async Task Main(string[] args)
@@ -65,8 +60,7 @@ class Program
         await RunRuntime(factory.CreateLogger("Service"));
     }
 
-    // Don't worry about the specifics of this method too much, it uses a feature called
-    // Lightweight Code Generatation (LCG) to generate new jitted methods on the fly.
+    // Uses Lightweight Code Generatation (LCG) to generate new jitted methods on the fly.
     // The only reason I'm using it here is to generate a predictable number of JIT events
     // on each Activity.
     static void MakeDynamicMethod()
