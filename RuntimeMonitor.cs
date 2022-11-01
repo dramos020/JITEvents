@@ -2,21 +2,6 @@
 using Microsoft.Extensions.Logging;
 
 
-class ActivityGeneratingEventSource : EventSource 
-{
-    [Event(1)]
-    public void UserDefinedStart() 
-    {
-        WriteEvent(1);
-    }
-
-    [Event(2)]
-    public void UserDefinedStop() 
-    {
-        WriteEvent(2);
-    }
-}
-
 class DiagnosticActivityInfo
 {
     public string eventName { get;}
@@ -28,20 +13,15 @@ class DiagnosticActivityInfo
         id = activityID;
         stopTime = null;
     }
-
-    public override string ToString()
-    {
-        return $"{eventName}:\n\t{id}\n"+ (stopTime != null ? stopTime.ToString() : "no stop time");
-    }
 }
 
-class RuntimeActivityEventListener : EventListener
+class RuntimeEventListener : EventListener
 {
     private ILogger m_logger;
     private static object s_consoleLock = new object();
-    private Dictionary<string, Stack<DiagnosticActivityInfo>> eventGroupings = new Dictionary<string, Stack<DiagnosticActivityInfo>>();
+    private Dictionary<string, Stack<DiagnosticActivityInfo>> activityMappings = new Dictionary<string, Stack<DiagnosticActivityInfo>>();
 
-    public RuntimeActivityEventListener(ILogger logger)
+    public RuntimeEventListener(ILogger logger)
     {
         m_logger = logger;
     }
@@ -68,38 +48,33 @@ class RuntimeActivityEventListener : EventListener
             // Enabling Keyword 0x80 on the TplEventSource turns them on
             EnableEvents(eventSource, EventLevel.Informational, (EventKeywords)0x80);
         }
-        else if (eventSource.Name == "ActivityGeneratingEventSource") 
-        {
-            EnableEvents(eventSource, EventLevel.Informational);
-        }
     }
 
+    // This makes a mapping of runtime events to the System.Diagnostic.Activity that was active
+    // when they were emitted. This is done by mapping the event's EventWrittenArgs.ActivityID
+    // to a System.Diagnostics.Activity.ID. 
     protected override void OnEventWritten(EventWrittenEventArgs eventData)
     {
         String eventDataActivityID = eventData.ActivityId.ToString();
-        //Console.WriteLine($"{eventData.EventName} has an eventData.ActivityID of {eventDataActivityID} and");
-        //Console.WriteLine($"{eventData.EventName}:aid of {eventDataActivityID} & thread id of {eventData.OSThreadId} & timestamp of {eventData.TimeStamp.Ticks}");
 
         lock (s_consoleLock)
         {
-            if (!eventGroupings.ContainsKey(eventDataActivityID))
+            if (!activityMappings.ContainsKey(eventDataActivityID))
             {
-                eventGroupings.Add(eventDataActivityID, new Stack<DiagnosticActivityInfo>());
+                activityMappings.Add(eventDataActivityID, new Stack<DiagnosticActivityInfo>());
             }
 
             if (eventData.EventName == "ActivityStart")
             {
-                //Console.WriteLine($"{eventData.EventName} with ID: {eventDataActivityID}");
-                object[] args = (object[])eventData.Payload[2];
+                object[] args = (object[])eventData.Payload![2]!;
                 string activityID = GetIDFromActivityPayload(args);
-                
-                eventGroupings[eventDataActivityID].Push(new DiagnosticActivityInfo(eventData.EventName, activityID));
+                activityMappings[eventDataActivityID].Push(new DiagnosticActivityInfo(eventData.EventName, activityID));
             }
             else if (eventData.EventName == "ActivityStop")
             {
-                foreach (DiagnosticActivityInfo activity in eventGroupings[eventDataActivityID])
+                foreach (DiagnosticActivityInfo activity in activityMappings[eventDataActivityID])
                 {
-                    object[] args = (object[])eventData.Payload[2];
+                    object[] args = (object[])eventData.Payload![2]!;
                     string activityID = GetIDFromActivityPayload(args);
 
                     if (activity.id == activityID)
@@ -108,20 +83,16 @@ class RuntimeActivityEventListener : EventListener
                         break;
                     }
                 }
-                //Console.WriteLine($"{eventData.EventName} with ID: {eventDataActivityID}");
             }
             else if (eventData.EventSource.Name == "Microsoft-Windows-DotNETRuntime")
             {
-                //Console.WriteLine($"{eventData.EventName} with ID: {eventDataActivityID}");
-                //printStack(eventGroupings[eventDataActivityID]);
-                if (eventGroupings[eventDataActivityID].Count > 0)
+                if (activityMappings[eventDataActivityID].Count > 0)
                 {
-                    while (eventGroupings[eventDataActivityID].Peek().stopTime != null && eventData.TimeStamp > eventGroupings[eventDataActivityID].Peek().stopTime)
+                    while (activityMappings[eventDataActivityID].Peek().stopTime != null && eventData.TimeStamp > activityMappings[eventDataActivityID].Peek().stopTime)
                     {
-                        eventGroupings[eventDataActivityID].Pop();
+                        activityMappings[eventDataActivityID].Pop();
                     }
-
-                    m_logger.LogInformation($"Runtime event {eventData.EventName} is associated with activity {eventGroupings[eventDataActivityID].Peek().id}");
+                    m_logger.LogInformation($"Runtime event {eventData.EventName} is associated with activity {activityMappings[eventDataActivityID].Peek().id}");
                 }
                 else
                 {
@@ -131,15 +102,7 @@ class RuntimeActivityEventListener : EventListener
         }
     }
 
-    private void printStack(Stack<DiagnosticActivityInfo> activities)
-    {
-        foreach (DiagnosticActivityInfo activity in activities)
-        {
-            Console.WriteLine(activity.ToString());
-        }
-    }
-
-    private static string? GetIDFromActivityPayload(object[] arguments)
+    private static string GetIDFromActivityPayload(object[] arguments)
     {
         foreach (object obj in arguments)
         {
@@ -149,6 +112,6 @@ class RuntimeActivityEventListener : EventListener
                 return (string)arg["Value"];
             }
         }
-        return null;
+        throw new ApplicationException("Activity.ID as not found.");
     }
 }

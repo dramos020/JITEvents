@@ -12,44 +12,6 @@ class Program
     delegate TReturn OneParameter<TReturn, TParameter0>
         (TParameter0 p0);
 
-    static async Task GenerateJITs(ILogger logger) 
-    {
-        using (RuntimeActivityEventListener listener = new RuntimeActivityEventListener(logger))
-        {
-            using (ActivityGeneratingEventSource eventSource = new ActivityGeneratingEventSource()){
-
-                // This code makes 3 Tasks, and then each task creates an Activity and then
-                // causes 5 methods to be jitted.
-                eventSource.UserDefinedStart();
-                for (int i = 0; i < 3; ++i)
-                {
-                    await Task.Run(() =>
-                    {
-                        using (Activity activity = new Activity($"Activity {i}"))
-                        {
-                            activity.Start();
-
-                            for (int i = 0; i < 5; i++)
-                            {
-                                MakeDynamicMethod();
-                            }
-                        }
-                    });
-                }
-                eventSource.UserDefinedStop();
-            }
-            // used so that the process does not end before events are sent
-            Thread.Sleep(1000);
-        }
-    }
-
-    static async Task RunRuntime(ILogger logger)
-    {
-        logger.LogInformation("Starting Runtime");
-        await GenerateJITs(logger);
-        logger.LogInformation("Completed Runtime");
-    }
-
     static async Task Main(string[] args)
     {
         ILoggerFactory factory = LoggerFactory.Create(options =>
@@ -58,6 +20,46 @@ class Program
         });
 
         await RunRuntime(factory.CreateLogger("Service"));
+    }
+
+    static async Task RunRuntime(ILogger logger)
+    {
+        logger.LogInformation("Starting runtime event generation");
+        await GenerateRuntimeEvents(logger);
+        logger.LogInformation("Ending runtime event generation");
+    }
+
+    static async Task GenerateRuntimeEvents(ILogger logger) 
+    {
+        using (RuntimeEventListener listener = new RuntimeEventListener(logger))
+        {
+            for (int i = 0; i < 3; ++i)
+            {
+                await Task.Run(() =>
+                {
+                    using (Activity activity = new Activity($"Activity {i}"))
+                    {
+                        activity.Start();
+
+                        // Generate JIT events
+                        for (int i = 0; i < 5; i++)
+                        {
+                            MakeDynamicMethod();
+                        }
+
+                        // Generate GC events
+                        List<object> objects = new List<object>();
+                        for (int i = 0; i < 100_000; ++i)
+                        {
+                            objects.Add(new object());
+                        }
+                        objects.Clear();
+                    }
+                });
+            }  
+            // used so that the process does not end before events are sent
+            Thread.Sleep(1000);
+        }
     }
 
     // Uses Lightweight Code Generatation (LCG) to generate new jitted methods on the fly.
