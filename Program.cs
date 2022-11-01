@@ -9,55 +9,8 @@ using Microsoft.Extensions.Logging;
 
 class Program
 {
-    delegate long SquareItInvoker(int input);
-
     delegate TReturn OneParameter<TReturn, TParameter0>
         (TParameter0 p0);
-
-
-    static async Task GenerateJITs(RuntimeContext context) 
-    {
-        using (var monitor = RuntimeEventMonitor.StartNew(context)) 
-        {
-            // Using without parentheses or brackets makes it live for the method body
-            using RuntimeActivityEventListener listener = new RuntimeActivityEventListener();
-
-            // This code makes 3 Tasks, and then each task creates an Activity and then
-            // causes 5 methods to be jitted.
-            List<Task> tasks = new List<Task>();
-            for (int i = 0; i < 3; ++i)
-            {
-                Task t = Task.Run(() =>
-                {
-                    using (Activity activity = new Activity($"Activity {i}"))
-                    {
-                        activity.Start();
-
-                        for (int i = 0; i < 5; i++)
-                        {
-                            MakeDynamicMethod();
-                        }
-                    }
-                });
-
-                tasks.Add(t);
-            }
-
-            foreach (Task t in tasks)
-            {
-                await t;
-            }
-        }
-    }
-
-    static async Task RunRuntime(ILogger logger)
-    {
-        RuntimeContext context = new RuntimeContext(logger);
-        logger.LogInformation("Starting Runtime");
-        await GenerateJITs(context);
-        logger.LogInformation("Completed Runtime");
-
-    }
 
     static async Task Main(string[] args)
     {
@@ -69,8 +22,47 @@ class Program
         await RunRuntime(factory.CreateLogger("Service"));
     }
 
-    // Don't worry about the specifics of this method too much, it uses a feature called
-    // Lightweight Code Generatation (LCG) to generate new jitted methods on the fly.
+    static async Task RunRuntime(ILogger logger)
+    {
+        logger.LogInformation("Starting runtime event generation");
+        await GenerateRuntimeEvents(logger);
+        logger.LogInformation("Ending runtime event generation");
+    }
+
+    static async Task GenerateRuntimeEvents(ILogger logger) 
+    {
+        using (RuntimeEventListener listener = new RuntimeEventListener(logger))
+        {
+            for (int i = 0; i < 3; ++i)
+            {
+                await Task.Run(() =>
+                {
+                    using (Activity activity = new Activity($"Activity {i}"))
+                    {
+                        activity.Start();
+
+                        // Generate JIT events
+                        for (int i = 0; i < 5; i++)
+                        {
+                            MakeDynamicMethod();
+                        }
+
+                        // Generate GC events
+                        List<object> objects = new List<object>();
+                        for (int i = 0; i < 100_000; ++i)
+                        {
+                            objects.Add(new object());
+                        }
+                        objects.Clear();
+                    }
+                });
+            }  
+            // used so that the process does not end before events are sent
+            Thread.Sleep(1000);
+        }
+    }
+
+    // Uses Lightweight Code Generatation (LCG) to generate new jitted methods on the fly.
     // The only reason I'm using it here is to generate a predictable number of JIT events
     // on each Activity.
     static void MakeDynamicMethod()
@@ -107,16 +99,3 @@ class Program
         return Guid.NewGuid().ToString();
     }
 }
-
-public class RuntimeContext 
-{
-    ILogger _logger;
-
-    public RuntimeContext(ILogger logger) => _logger = logger;
-
-    public void LogRuntimeEvent(string runtimeEvent, string activityID) 
-    {
-        _logger.LogInformation(string.IsNullOrEmpty(activityID) ? $"Runtime event {runtimeEvent} has no associated activity" : $"Runtime event {runtimeEvent} is associated with activity {activityID}" );
-    }
-}
-
