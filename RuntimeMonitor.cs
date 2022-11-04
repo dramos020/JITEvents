@@ -11,7 +11,7 @@ class DiagnosticActivityInfo
     {
         eventName = name;
         id = activityID;
-        stopTime = null;
+        stopTime = DateTime.MaxValue;
     }
 }
 
@@ -19,7 +19,9 @@ class RuntimeEventListener : EventListener
 {
     private ILogger m_logger;
     private static object s_consoleLock = new object();
-    private Dictionary<string, Stack<DiagnosticActivityInfo>> activityMappings = new Dictionary<string, Stack<DiagnosticActivityInfo>>();
+    private Dictionary<string, DiagnosticActivityInfo> activityMappings = new Dictionary<string, DiagnosticActivityInfo>();
+    private int runtimeEventCount = 0;
+    private const int flushingTrigger = 100;
 
     public RuntimeEventListener(ILogger logger)
     {
@@ -56,49 +58,52 @@ class RuntimeEventListener : EventListener
     protected override void OnEventWritten(EventWrittenEventArgs eventData)
     {
         String eventDataActivityID = eventData.ActivityId.ToString();
-
+        //Console.WriteLine($"{eventData.EventName}: {eventData.ActivityId} {eventData.TimeStamp.Ticks} {eventData.OSThreadId}");
         lock (s_consoleLock)
         {
-            if (!activityMappings.ContainsKey(eventDataActivityID))
-            {
-                activityMappings.Add(eventDataActivityID, new Stack<DiagnosticActivityInfo>());
-            }
-
             if (eventData.EventName == "ActivityStart")
             {
                 object[] args = (object[])eventData.Payload![2]!;
                 string activityID = GetIDFromActivityPayload(args);
-                activityMappings[eventDataActivityID].Push(new DiagnosticActivityInfo(eventData.EventName, activityID));
+                activityMappings.Add(eventDataActivityID, new DiagnosticActivityInfo(eventData.EventName, activityID));
             }
             else if (eventData.EventName == "ActivityStop")
             {
-                foreach (DiagnosticActivityInfo activity in activityMappings[eventDataActivityID])
-                {
-                    object[] args = (object[])eventData.Payload![2]!;
-                    string activityID = GetIDFromActivityPayload(args);
-
-                    if (activity.id == activityID)
-                    {
-                        activity.stopTime = eventData.TimeStamp;
-                        break;
-                    }
-                }
+                activityMappings[eventDataActivityID].stopTime = eventData.TimeStamp;
             }
             else if (eventData.EventSource.Name == "Microsoft-Windows-DotNETRuntime")
             {
-                if (activityMappings[eventDataActivityID].Count > 0)
+                if (activityMappings.ContainsKey(eventDataActivityID))
                 {
-                    while (activityMappings[eventDataActivityID].Peek().stopTime != null && eventData.TimeStamp > activityMappings[eventDataActivityID].Peek().stopTime)
-                    {
-                        activityMappings[eventDataActivityID].Pop();
-                    }
-                    m_logger.LogInformation($"Runtime event {eventData.EventName} is associated with activity {activityMappings[eventDataActivityID].Peek().id}");
-                }
+                    m_logger.LogInformation($"Runtime event {eventData.EventName} is associated with activity {activityMappings[eventDataActivityID].id}");
+                } 
                 else
                 {
                     m_logger.LogInformation($"Could not find activity to associate to runtime event {eventData.EventName}.");
                 }
+
+                if (++runtimeEventCount % flushingTrigger == 0)
+                {
+                    FlushMappings(eventData.TimeStamp);
+                }
             }
+        }
+    }
+
+    private void FlushMappings(DateTime timestamp)
+    {
+        List<string> activitiesToRemove = new List<string>();
+
+        foreach (KeyValuePair<string, DiagnosticActivityInfo> mapping in activityMappings)
+        {
+            if(mapping.Value.stopTime < timestamp){
+                activitiesToRemove.Add(mapping.Key);
+            }
+        }
+        
+        foreach (string activityID in activitiesToRemove)
+        {
+            activityMappings.Remove(activityID);
         }
     }
 
@@ -112,6 +117,6 @@ class RuntimeEventListener : EventListener
                 return (string)arg["Value"];
             }
         }
-        throw new ApplicationException("Activity.ID as not found.");
+        throw new ApplicationException("Activity.ID was not found.");
     }
 }
