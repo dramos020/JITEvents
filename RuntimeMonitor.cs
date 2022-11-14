@@ -58,7 +58,6 @@ class RuntimeEventListener : EventListener
     protected override void OnEventWritten(EventWrittenEventArgs eventData)
     {
         String eventDataActivityID = eventData.ActivityId.ToString();
-        //Console.WriteLine($"{eventData.EventName}: {eventData.ActivityId} {eventData.TimeStamp.Ticks} {eventData.OSThreadId}");
         lock (s_consoleLock)
         {
             if (eventData.EventName == "ActivityStart")
@@ -77,10 +76,6 @@ class RuntimeEventListener : EventListener
                 {
                     m_logger.LogInformation($"Runtime event {eventData.EventName} is associated with activity {activityMappings[eventDataActivityID].id}");
                 } 
-                else
-                {
-                    m_logger.LogInformation($"Could not find activity to associate to runtime event {eventData.EventName}.");
-                }
 
                 if (++runtimeEventCount % flushingTrigger == 0)
                 {
@@ -90,6 +85,8 @@ class RuntimeEventListener : EventListener
         }
     }
 
+    // This flushes the cache of System.Diagnostic.Activities that have stopped before a given timestamp. If not,
+    // it is possible to hit OOM with large applications.
     private void FlushMappings(DateTime timestamp)
     {
         List<string> activitiesToRemove = new List<string>();
@@ -107,6 +104,7 @@ class RuntimeEventListener : EventListener
         }
     }
 
+    // Extracts the System.Diagnostics.Activity.ID from the payload of the activity.
     private static string GetIDFromActivityPayload(object[] arguments)
     {
         foreach (object obj in arguments)

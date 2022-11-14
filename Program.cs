@@ -1,10 +1,6 @@
 ﻿using System.Reflection.Emit;
 using System.Reflection;
-using System.Diagnostics.Tracing;
 using System.Diagnostics;
-using System;
-using System.Threading.Tasks;
-using System.Collections;
 using Microsoft.Extensions.Logging;
 
 class Program
@@ -49,7 +45,7 @@ class Program
 
                         // Generate GC events
                         List<object> objects = new List<object>();
-                        for (int i = 0; i < 100_000; ++i)
+                        for (int i = 0; i < 100000; ++i)
                         {
                             objects.Add(new object());
                         }
